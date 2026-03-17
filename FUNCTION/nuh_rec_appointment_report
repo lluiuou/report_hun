@@ -1,0 +1,56 @@
+-- DROP FUNCTION public.nuh_rec_appointment_report(timestamptz, timestamptz);
+
+CREATE OR REPLACE FUNCTION public.nuh_rec_appointment_report(p_start timestamp with time zone, p_end timestamp with time zone)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    result jsonb;
+BEGIN
+    WITH appointment_data AS (
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY a."start") AS seq_no,
+            a.patient_hn AS hn,
+            TO_CHAR(a."start" AT TIME ZONE 'Asia/Bangkok', 'DD/MM/YYYY') AS appointment_date,
+            TO_CHAR(a."start" AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS appointment_time,
+            c.name AS clinic_name,
+            prac.display AS doctor_name,
+            a.service_type::text AS appointment_type,
+            a.current_status::text AS appointment_status
+        FROM appointment a
+        LEFT JOIN clinic c ON c.id = a.clinic_id
+        LEFT JOIN practitioner prac ON prac.id = a.practitioner_id
+        WHERE a.deleted_at IS NULL
+          AND a."start" >= p_start
+          AND a."start" < p_end
+    )
+    SELECT jsonb_build_object(
+        'meta', jsonb_build_object(
+            'report_name', 'Appointment Report',
+            'start_datetime', p_start,
+            'end_datetime', p_end,
+            'generated_at', now()
+        ),
+        'content',
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'seq_no', seq_no,
+                    'hn', hn,
+                    'appointment_date', appointment_date,
+                    'appointment_time', appointment_time,
+                    'clinic_name', clinic_name,
+                    'doctor_name', doctor_name,
+                    'appointment_type', appointment_type,
+                    'appointment_status', appointment_status
+                )
+            )
+            FROM appointment_data
+        )
+    )
+    INTO result;
+
+    RETURN result;
+END;
+$function$
+;
